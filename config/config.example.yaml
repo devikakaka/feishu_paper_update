@@ -116,13 +116,13 @@ feishu:
   app_id: "${FEISHU_APP_ID}"
   app_secret: "${FEISHU_APP_SECRET}"
   # 知识库 Space ID（从飞书知识库设置页 URL 获取，详见 docs/FEISHU_SETUP.md）
-  wiki_space_id: ""
+  wiki_space_id: "7648999909336566964"
   # 可选：父节点 token（为空则创建在根目录）
   parent_node_token: ""
   # 节点标题模板（{date} 会被替换为当天日期）
   node_title_template: "每日评论分析 - {date}"
   # 设为 false 可在本地测试时不上传
-  upload_enabled: false
+  upload_enabled: true
 
 output:
   readme_path: "README.md"
