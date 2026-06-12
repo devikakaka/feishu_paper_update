@@ -133,6 +133,49 @@ def test_html_source_filters_by_date(mock_session, scraper_config):
 
 
 @patch("src.scraper.requests.Session")
+def test_html_source_filters_by_target_date(mock_session, scraper_config):
+    """Test that HTML source respects an explicit target date."""
+    target_date = "2026-06-10"
+    other_date = "2026-06-11"
+
+    listing_resp = MagicMock()
+    listing_resp.text = f"""
+    <html><body><ul>
+        <li><a href="/article/target">Target Article</a><i class="gray">{target_date}</i></li>
+        <li><a href="/article/other">Other Article</a><i class="gray">{other_date}</i></li>
+    </ul></body></html>
+    """
+    listing_resp.apparent_encoding = "utf-8"
+    listing_resp.raise_for_status = MagicMock()
+
+    detail_resp = MagicMock()
+    detail_resp.text = """
+    <html><body>
+        <h1>Target Article Title</h1>
+        <div class="content"><p>Target content</p></div>
+    </body></html>
+    """
+    detail_resp.apparent_encoding = "utf-8"
+    detail_resp.raise_for_status = MagicMock()
+
+    mock_session_instance = MagicMock()
+
+    def get_side_effect(url, **kwargs):
+        if "example.com/articles" in url:
+            return listing_resp
+        return detail_resp
+
+    mock_session_instance.get.side_effect = get_side_effect
+    mock_session.return_value = mock_session_instance
+
+    scraper = MultiSourceScraper(scraper_config, target_date=target_date)
+    articles = scraper.scrape()
+
+    assert len(articles) == 1
+    assert articles[0].date == target_date
+
+
+@patch("src.scraper.requests.Session")
 def test_api_source_filters_by_date(mock_session, api_scraper_config):
     """Test that API source only returns today's articles."""
     today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
@@ -168,6 +211,83 @@ def test_api_source_filters_by_date(mock_session, api_scraper_config):
     assert len(articles) == 1
     assert articles[0].title == "Today Article"
     assert articles[0].content == "Today's content"
+
+
+@patch("src.scraper.requests.Session")
+def test_api_source_filters_by_target_date(mock_session, api_scraper_config):
+    """Test that API source respects an explicit target date."""
+    target_date = "2026-06-10"
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "data": {
+            "list": [
+                {
+                    "title": "Target Article",
+                    "pub_time": target_date,
+                    "url": "https://example.com/target",
+                    "post": {"content": "Target content"},
+                },
+                {
+                    "title": "Other Article",
+                    "pub_time": "2026-06-11",
+                    "url": "https://example.com/other",
+                    "post": {"content": "Other content"},
+                },
+            ]
+        }
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_session_instance = MagicMock()
+    mock_session_instance.post.return_value = mock_resp
+    mock_session.return_value = mock_session_instance
+
+    scraper = MultiSourceScraper(api_scraper_config, target_date=target_date)
+    articles = scraper.scrape()
+
+    assert len(articles) == 1
+    assert articles[0].title == "Target Article"
+    assert articles[0].date == target_date
+
+
+@patch("src.scraper.requests.Session")
+def test_api_source_sends_custom_headers(mock_session, api_scraper_config):
+    """Test that API source forwards configured headers to the POST request."""
+    today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+
+    api_scraper_config["scraper"]["sources"][0]["headers"] = {
+        "Origin": "https://search.southcn.com",
+        "Referer": "https://search.southcn.com/?keyword=test",
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "data": {
+            "list": [
+                {
+                    "title": "Today Article",
+                    "pub_time": today,
+                    "url": "https://example.com/today",
+                    "post": {"content": "Today's content"},
+                },
+            ]
+        }
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_session_instance = MagicMock()
+    mock_session_instance.post.return_value = mock_resp
+    mock_session.return_value = mock_session_instance
+
+    scraper = MultiSourceScraper(api_scraper_config)
+    articles = scraper.scrape()
+
+    assert len(articles) == 1
+    _, kwargs = mock_session_instance.post.call_args
+    assert kwargs["headers"]["Origin"] == "https://search.southcn.com"
+    assert kwargs["headers"]["Referer"] == "https://search.southcn.com/?keyword=test"
+    assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
 
 
 @patch("src.scraper.requests.Session")
@@ -268,3 +388,97 @@ def test_content_extracts_paragraphs(mock_session, scraper_config):
     assert "Second paragraph" in content
     assert "Third paragraph" in content
     assert "var x = 1" not in content
+
+
+@patch("src.scraper.requests.Session")
+def test_scrape_url_extracts_single_article(mock_session, scraper_config):
+    """Single URL mode should extract title and paragraphs from a detail page."""
+    detail_resp = MagicMock()
+    detail_resp.text = """
+    <html><head><title>备用标题</title></head><body>
+        <article>
+            <h1>单篇文章标题</h1>
+            <p>第一段内容。</p>
+            <p>第二段内容。</p>
+        </article>
+    </body></html>
+    """
+    detail_resp.apparent_encoding = "utf-8"
+    detail_resp.raise_for_status = MagicMock()
+
+    mock_session_instance = MagicMock()
+    mock_session_instance.get.return_value = detail_resp
+    mock_session.return_value = mock_session_instance
+
+    scraper = MultiSourceScraper(scraper_config, target_date="2026-06-12")
+    article = scraper.scrape_url("https://example.com/one", source_name="其它来源")
+
+    assert article is not None
+    assert article.title == "单篇文章标题"
+    assert article.source_name == "其它来源"
+    assert article.url == "https://example.com/one"
+    assert article.content == "第一段内容。\n\n第二段内容。"
+
+
+def test_extract_first_available_value():
+    """Helper should return the first non-empty value from candidate paths."""
+    scraper = MultiSourceScraper.__new__(MultiSourceScraper)
+    data = {"data": {"content": "", "post": {"content": "正文"}}}
+
+    assert scraper._extract_first_available_value(data, ["data.content", "data.post.content"]) == "正文"
+
+
+@patch("src.scraper.requests.Session")
+def test_api_source_fetches_detail_content_by_item_key(mock_session, api_scraper_config):
+    """Southcn detail API should use the list item's key and return full post content."""
+    today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+    api_scraper_config["scraper"]["sources"][0]["api"].pop("content_field", None)
+    api_scraper_config["scraper"]["sources"][0]["api"]["detail_api"] = {
+        "context_extract": {"key": ["key"]},
+        "url": "https://news.southcn.com/api/nodePost/getOne?key={key}",
+        "content_path": "data.post.content",
+        "content_type": "html",
+    }
+
+    list_resp = MagicMock()
+    list_resp.json.return_value = {
+        "data": {
+            "list": [
+                {
+                    "title": "南方日报评论员：标题",
+                    "pub_time": today,
+                    "url": "https://example.com/test",
+                    "key": "e19b4e996a",
+                }
+            ]
+        }
+    }
+    list_resp.raise_for_status = MagicMock()
+
+    detail_resp = MagicMock()
+    detail_resp.json.return_value = {
+        "data": {
+            "post": {
+                "content": "<p>第一段完整正文。</p><p>第二段完整正文。</p>"
+            }
+        }
+    }
+    detail_resp.raise_for_status = MagicMock()
+
+    mock_session_instance = MagicMock()
+    mock_session_instance.post.return_value = list_resp
+
+    def get_side_effect(url, **kwargs):
+        if "getOne" in url:
+            assert "key=e19b4e996a" in url
+            return detail_resp
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    mock_session_instance.get.side_effect = get_side_effect
+    mock_session.return_value = mock_session_instance
+
+    scraper = MultiSourceScraper(api_scraper_config)
+    articles = scraper.scrape()
+
+    assert len(articles) == 1
+    assert articles[0].content == "第一段完整正文。\n\n第二段完整正文。"

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="article-title" content="{{article_title}}" />
+  <meta name="article-url" content="{{article_url}}" />
+  <meta name="article-source" content="{{article_source}}" />
+  <meta name="article-date" content="{{article_date}}" />
+  <title>{{article_title}}</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #d9e2ec;
+      --title: #111827;
+      --accent: #f59e0b;
+      --accent-bg: #fff7ed;
+      --highlight-1: #fff3c4;
+      --highlight-2: #dff3ff;
+      --analysis-bg: #eef7ff;
+      --success: #1f8a4c;
+      --table-head: #eef0f3;
+      --shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", Arial, sans-serif;
+      line-height: 1.75;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .article-wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 18px 16px 28px;
+    }
+
+    .article-card {
+      background: var(--card);
+      border: 1px solid #e8edf3;
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    h1 {
+      margin: 0;
+      padding: 15px 18px;
+      text-align: center;
+      font-size: 30px;
+      line-height: 1.35;
+      color: var(--title);
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid #e6ebf2;
+      background: linear-gradient(180deg, #ffffff 0%, #fcfdff 100%);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      line-height: 1.4;
+      color: var(--title);
+      font-weight: 800;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--title);
+      font-weight: 700;
+    }
+
+    .info-bar {
+      padding: 12px 18px 14px;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid #edf1f6;
+      background: #fff;
+    }
+
+    .info-bar a {
+      color: #2563eb;
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .info-bar a:hover { text-decoration: underline; }
+
+    .section {
+      padding: 16px 18px;
+      border-bottom: 1px solid #edf1f6;
+      background: #fff;
+    }
+
+    .section:last-child { border-bottom: none; }
+
+    .section-title {
+      display: inline-block;
+      margin-bottom: 12px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      background: var(--accent-bg);
+      color: #b45309;
+      border: 1px solid #fed7aa;
+    }
+
+    .keywords {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .keyword-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: #f8fafc;
+      border: 1px solid #dbe3ee;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+
+    .origin-block {
+      margin: 10px 0;
+      padding: 14px 14px 14px 16px;
+      border-left: 4px solid #d1d5db;
+      border-radius: 10px;
+      background: #fff;
+      color: #111827;
+      font-family: "SimSun", "Songti SC", serif;
+      font-size: 18px;
+      line-height: 1.9;
+    }
+
+    .origin-block p { margin: 0 0 10px; }
+    .origin-block p:last-child { margin-bottom: 0; }
+
+    .origin-label { font-weight: 700; color: #111827; }
+
+    .center-sentence {
+      background: var(--highlight-1);
+      padding: 0 4px;
+      border-radius: 4px;
+    }
+
+    .good-sentence {
+      background: var(--highlight-2);
+      padding: 0 4px;
+      border-radius: 4px;
+    }
+
+    .analysis-box {
+      margin: 8px 0;
+      padding: 12px;
+      border-radius: 4px;
+      background: var(--analysis-bg);
+      font-size: 15px;
+      line-height: 1.7;
+      color: #334155;
+      border: 1px solid #dbeafe;
+    }
+
+    .analysis-box + .analysis-box { margin-top: 8px; }
+
+    .analysis-box .label {
+      display: inline-block;
+      margin-right: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+      vertical-align: middle;
+    }
+
+    .analysis-box .core-point {
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .analysis-box .jinju {
+      font-weight: 800;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      text-decoration-thickness: 2px;
+      color: #0f172a;
+    }
+
+    .analysis-box .waypoints {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+
+    .analysis-box .waypoints li { margin: 4px 0; }
+
+    .case { color: var(--success); font-weight: 700; }
+    .case-label { color: var(--success); font-weight: 800; }
+
+    hr {
+      border: none;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #cfd8e3, transparent);
+      margin: 18px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      background: #fff;
+      border: 1px solid #dfe6ef;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    thead th {
+      background: var(--table-head);
+      color: #334155;
+      font-weight: 700;
+    }
+
+    th,
+    td {
+      border: 1px solid #dfe6ef;
+      padding: 8px 10px;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 14px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    tbody tr:nth-child(even) td { background: #fbfcfe; }
+
+    .table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    @media (max-width: 768px) {
+      .article-wrap { padding: 10px; }
+      h1 { font-size: 22px; padding: 15px 12px; }
+      .section,
+      .info-bar { padding-left: 12px; padding-right: 12px; }
+      .origin-block { font-size: 16px; padding: 12px; line-height: 1.8; }
+      .analysis-box { font-size: 14px; padding: 11px; }
+      th,
+      td { padding: 7px 8px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="article-wrap">
+    <div class="article-card">
+      {{content}}
+    </div>
+  </div>
+</body>
+</html>

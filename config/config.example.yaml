@@ -24,31 +24,48 @@ scraper:
     - name: "南方网-南方日报评论员"
       type: "api"
       url: "https://search.southcn.com/api/search/all"
+      headers:
+        Accept: "*/*"
+        Accept-Language: "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-TW;q=0.5"
+        Content-Type: "application/x-www-form-urlencoded; charset=UTF-8"
+        Origin: "https://search.southcn.com"
+        Referer: "https://search.southcn.com/?project_id=5&service_area=1&sort=time&position=&keywords=%E5%8D%97%E6%96%B9%E6%97%A5%E6%8A%A5%E8%AF%84%E8%AE%BA%E5%91%98&page_size=10&page=1&type=normal"
+        X-Requested-With: "XMLHttpRequest"
       params:
-        keyword: "南方日报评论员"
-        s: "time"
+        project_id: 5
+        service_area: 1
+        sort: "time"
+        position: ""
+        keywords: "南方日报评论员"
+        page_size: 10
         page: 1
+        type: "normal"
       api:
         items_path: "data.news.list"
         title_field: "title"
-        content_field: "post.content"
         date_field: "pub_time"
         url_field: "url"
         title_filter: "南方日报评论员"
+        detail_api:
+          context_extract:
+            key:
+              - "key"
+          url: "https://news.southcn.com/api/nodePost/getOne?key={key}"
+          content_path: "data.post.content"
+          content_type: "html"
 
-    # ── 源3：人民网 - 壹时评 ────────────────────────────────────
-    - name: "人民网-壹时评"
-      type: "html"
-      url: "http://opinion.people.com.cn/GB/223228/index.html"
-      base_url: "http://opinion.people.com.cn"
-      selectors:
-        list_items: "ul.list_14 li"
-        article_link: "a"
-        date_selector: "i.gray"
-      detail_selectors:
-        title: ".rm_txt h1"
-        content: "#rm_txt_zw"
-
+    # # ── 源3：人民网 - 壹时评 ────────────────────────────────────
+    # - name: "人民网-壹时评"
+    #   type: "html"
+    #   url: "http://opinion.people.com.cn/GB/223228/index.html"
+    #   base_url: "http://opinion.people.com.cn"
+    #   selectors:
+    #     list_items: "ul.list_14 li"
+    #     article_link: "a"
+    #     date_selector: "i.gray"
+    #   detail_selectors:
+    #     title: ".rm_txt h1"
+    #     content: "#rm_txt_zw"
   # 请求间隔（秒），礼貌爬虫
   request_delay: 2.0
   # 请求超时（秒）
@@ -58,41 +75,125 @@ scraper:
   # 文章内容最大字符数
   max_content_length: 50000
 
+
 llm:
   # DashScope API Key（通过环境变量 DASHSCOPE_API_KEY 注入）
   api_key: "${DASHSCOPE_API_KEY}"
   # DashScope OpenAI 兼容端点
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   # 模型名称（qwen-plus 性价比最优，qwen-max 质量最佳）
-  model: "qwen-plus"
+  model: "qwen3.6-35b-a3b"
 
   # 系统提示词：指导模型如何分析文章
   system_prompt: |
-    你是一位专业的内容分析师，擅长从评论文章中提取核心观点并生成结构化摘要。
+    # 身份定位
+    你是专业的公文范文解析助手。请基于原文输出 Markdown 格式笔记。
+    
+    # 核心规则
+    1. 先在内部对全文逐段完成一次信息抽取（段落结构、金句、关键词句、做法要点、事例、升华点），再组织最终输出。
+    2. 同一信息只允许分析一次，后续板块只能复用，不得重复推导、重复改写。
+    3. 【原文】只做证据展示与格式标注，不重复承担分析职能。
 
-    对于每篇文章，请按以下格式输出分析结果（使用 Markdown）：
+    # 内部抽取字段
+    对每个部分，先统一抽取以下信息：
+    - 小标题
+    - 段落结构（段落行文思路梳理，点明段落对比、正反、递进等写作手法）
+    - 中心句
+    - 金句（优先比喻/对仗/排比/对比）
+    - 关键词句
+    - 做法要点
+    - 事例
+    - 升华点
 
-    ## [文章标题]
+    # 生成规则
+    1. 不要简单复述原文，要做结构化提炼。
+    2. 金句优先选择比喻、对仗、排比、对比句。
+    3. 做法要点要短小精悍，适合记忆。
+    4. 全程使用 Markdown 格式输出，包含标题、列表、表格。
+    5. 如果文章没有明显分论点，按“是什么-为什么-怎么办”拆解。
+    6. 【原文】要求：
+      6.1. 完整引用原文段落，不改动原文内容；
+      6.2. 统一标注：**中心句加粗**、*优质金句斜体*；
+      6.3. 在对应原文内容的后面使用()标注行文思路与作用，只允许使用简洁括号标签，如：（提出分论点）（举例论证）（对比分析）（总结升华）
+    7. 【解析】中的“段落结构”和“✨金句”必须直接复用前面那次统一抽取结果，不得重新分析一遍
+    8. 如果某句已在【原文】中以加粗或斜体标出，【解析】中应解释其作用、价值和迁移用法，而不是再次大段摘录。
 
-    **来源**: [来源名称]
-    **核心主题**: 一句话概括文章的核心观点
-    **关键要点**:
-    1. 要点一
-    2. 要点二
-    3. 要点三
-    **详细分析**: 2-3 段深入分析，包括论证逻辑、政策背景、现实意义
-    **适用场景**: 这篇文章的论述适合在什么情况下参考引用
-    **原文链接**: [原文链接](URL)
+
+    # 严格遵循以下输出格式
+    ```
+    # [文章标题]
+    > 来源：[来源] ｜ 日期：[日期] ｜ [原文链接]
+
+    **🔑 关键词**：词1、词2、词3（3-5个公考核心高频词）
 
     ---
 
-    请保持客观、准确、简洁，突出文章的论证逻辑和政策价值。
+    # 📖 原文&解析
 
-  # 用户提示词模板（{article_title}、{article_content}、{article_url}、{article_source} 会被替换）
+    ## 🎯 中心论点：[小标题]
+    【原文】
+      （完整引用原文；中心句加粗，金句斜体；必要时用简洁括号标注行文作用）
+    【解析】
+     **段落结构：**
+     （直接复用统一抽取后的结构结论）
+     **✨金句：**
+       （直接复用统一抽取出的代表性金句）
+      - 解析
+      - 提炼仿写句式，给出适配公考主题的改写示例
+     **📌关键词句：**
+      - 关键词句1: 提炼核心表述、机关公文高频词
+      - 关键词句2，……
+
+    ## 📌 分论点1：[小标题]
+    【原文】
+      （完整引用原文；中心句加粗，金句斜体；必要时用简洁括号标注行文作用）
+    【解析】
+      **段落结构：**
+        （直接复用统一抽取后的结构结论）
+      **✨金句: **
+         （直接复用统一抽取出的代表性金句）
+        - 解析
+        - 提炼仿写句式，给出适配公考主题的改写示例
+      **做法要点: **
+        1. 要点一（≤15字）
+        2. 要点二 …
+      **📜事例: **
+        简要概括文中案例
+
+    ## 📌 分论点N：…（结构同上，按原文段落顺序逐一展开）
+
+    ## 🔚 结尾
+    【原文】
+    （完整引用原文；中心句加粗，金句斜体；必要时用简洁括号标注行文作用）
+    【解析】：
+      **✨金句: **  
+         （直接复用统一抽取出的代表性金句）
+        - 解析
+        - 仿写公式 + 适用公考主题
+      **🚀升华分析: **
+        解读结尾升华主旨、首尾呼应、点题扣题的写作技巧，总结全文高分行文逻辑
+
+    ---
+
+    # 💡 精华总结
+    ## 📋 全文结构速览
+    表格：段落、论点、核心关键词、在文中的层次
+
+    ## ✨ 精选金句
+    表格：金句 | 关键词 | 适用话题 | 仿写思路
+
+    ## 📚 论据积累
+    表格：论据 | 关键词 | 适用话题
+
+    ## 🧭 角度速查
+    表格：主题 | 可用角度 | 关联金句/案例
+    ```
+
+
+  # User prompt template ({article_title}, {article_content}, {article_url} are substituted)
   user_prompt_template: |
-    请分析以下评论文章：
+    请分析以下文章：
 
-    来源：{article_source}
     标题：{article_title}
     链接：{article_url}
 
@@ -107,6 +208,7 @@ llm:
   # 截断文章内容的最大字符数
   max_content_length: 8000
 
+
 feishu:
   # 飞书 Open API 地址
   # 国内版：https://open.feishu.cn
@@ -119,6 +221,12 @@ feishu:
   wiki_space_id: "7648999909336566964"
   # 可选：父节点 token（为空则创建在根目录）
   parent_node_token: ""
+  # 可选：按来源名映射到不同目录的父节点 token
+  source_parent_node_tokens:
+    "人民网-人民时评": "ZOf7wJhtMiWnS6kvhm6cA6CCnnd"
+    "南方网-南方日报评论员": "VoZTwl4oTi4PImk1DslcVG7knnf"
+    "人民论坛网评": "QeAkwUjyQi6kSckQN61cfbm0nxd"
+    "其它来源": "Q2mowP4UwiohRBkGgVTcuUtbn4g"
   # 节点标题模板（{date} 会被替换为当天日期）
   node_title_template: "每日评论分析 - {date}"
   # 设为 false 可在本地测试时不上传
@@ -129,5 +237,7 @@ output:
   save_raw_articles: true
   raw_articles_dir: "output/articles"
   save_analysis: true
+  html_output_dir: "output/analysis_html"
+  article_report_template: "templates/article_report_template.html"
   analysis_file: "output/latest_analysis.md"
   readme_history_days: 30

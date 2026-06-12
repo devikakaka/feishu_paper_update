@@ -147,3 +147,233 @@ code block
 """
     blocks = markdown_to_feishu_blocks(md)
     assert len(blocks) == 10  # 1 heading + 1 paragraph + 1 heading + 2 bullets + 2 ordered + 1 quote + 1 divider + 1 code
+
+
+# ── Table tests ──────────────────────────────────────────────────────
+# Tables are kept as an internal table representation and expanded by the
+# uploader into regular Feishu text/list blocks before upload.
+
+
+def _cell_text(cell_block: dict) -> str:
+    """Helper: extract plain text from an internal table cell."""
+    return "".join(
+        elem["text_run"]["content"]
+        for elem in cell_block.get("elements", [])
+        if "text_run" in elem
+    )
+
+
+def _block_text(block: dict) -> str:
+    """Helper: extract plain text from a regular text-like block."""
+    for key in ("text", "bullet", "ordered", "quote", "heading1", "heading2", "heading3"):
+        if key in block:
+            return "".join(
+                elem["text_run"]["content"]
+                for elem in block[key].get("elements", [])
+                if "text_run" in elem
+            )
+    return ""
+
+
+def test_table_basic():
+    """Test basic markdown table → internal table format."""
+    md = "| A | B |\n|---|---|\n| 1 | 2 |"
+    blocks = markdown_to_feishu_blocks(md)
+    assert len(blocks) == 1
+    tbl = blocks[0]
+    assert tbl["block_type"] == 31
+
+    prop = tbl["table"]["property"]
+    assert prop["row_size"] == 2
+    assert prop["column_size"] == 2
+
+    rows = tbl["_table_rows"]
+    assert len(rows) == 2
+    assert len(rows[0]) == 2
+    assert len(rows[1]) == 2
+
+    assert _cell_text(rows[0][0]) == "A"
+    assert _cell_text(rows[0][1]) == "B"
+    assert _cell_text(rows[1][0]) == "1"
+    assert _cell_text(rows[1][1]) == "2"
+
+
+def test_table_with_bold():
+    """Test table cells with bold formatting."""
+    md = "| Header |\n|---|\n| **bold** |"
+    blocks = markdown_to_feishu_blocks(md)
+    rows = blocks[0]["_table_rows"]
+    assert len(rows) == 2
+
+    # Data cell has bold styling
+    data_cell = rows[1][0]
+    elements = data_cell["elements"]
+    assert elements[0]["text_run"]["text_element_style"]["bold"] is True
+    assert elements[0]["text_run"]["content"] == "bold"
+
+
+def test_table_with_italic():
+    """Test table cells with italic formatting."""
+    md = "| Header |\n|---|\n| *italic* |"
+    blocks = markdown_to_feishu_blocks(md)
+    elements = blocks[0]["_table_rows"][1][0]["elements"]
+    assert elements[0]["text_run"]["text_element_style"]["italic"] is True
+
+
+def test_table_with_link():
+    """Test table cells with links."""
+    md = "| Link |\n|---|\n| [text](http://x.com) |"
+    blocks = markdown_to_feishu_blocks(md)
+    elements = blocks[0]["_table_rows"][1][0]["elements"]
+    assert elements[0]["text_run"]["content"] == "text"
+    assert elements[0]["text_run"]["text_element_style"]["link"]["url"] == "http://x.com"
+
+
+def test_table_with_underline_italic():
+    """Test table cells with <u>*text*</u> formatting."""
+    md = "| Quote |\n|---|\n| <u>*italic underline*</u> |"
+    blocks = markdown_to_feishu_blocks(md)
+    elements = blocks[0]["_table_rows"][1][0]["elements"]
+    assert elements[0]["text_run"]["text_element_style"]["italic"] is True
+    assert elements[0]["text_run"]["content"] == "italic underline"
+
+
+def test_table_with_mixed_formatting():
+    """Test table with bold, italic, and plain text cells."""
+    md = "| A | B | C |\n|---|---|---|\n| **bold** | plain | *italic* |"
+    blocks = markdown_to_feishu_blocks(md)
+    row = blocks[0]["_table_rows"][1]
+
+    assert _cell_text(row[0]) == "bold"
+    assert row[0]["elements"][0]["text_run"]["text_element_style"]["bold"] is True
+    assert _cell_text(row[1]) == "plain"
+    assert row[2]["elements"][0]["text_run"]["text_element_style"]["italic"] is True
+
+
+def test_table_with_empty_cell():
+    """Test that empty cells get a space character."""
+    md = "| A | B |\n|---|---|\n|  | x |"
+    blocks = markdown_to_feishu_blocks(md)
+    row = blocks[0]["_table_rows"][1]
+    assert _cell_text(row[0]) == " "
+
+
+def test_real_analysis_table():
+    """Test a table matching the actual analysis output format."""
+    md = (
+        "| 段落 | 论点 | 核心关键词 | 在文中的层次 |\n"
+        "|------|------|-----------|-------------|\n"
+        "| P1-P4 | 贸易需算综合账 | 订单回流 | 引论/总起 |\n"
+        "| P5-P6 | 大市场优势 | 供需双强 | 本论一 |\n"
+    )
+    blocks = markdown_to_feishu_blocks(md)
+    assert len(blocks) == 1
+    tbl = blocks[0]
+    assert tbl["block_type"] == 31
+
+    prop = tbl["table"]["property"]
+    assert prop["row_size"] == 3
+    assert prop["column_size"] == 4
+    assert len(tbl["_table_rows"]) == 3
+    assert len(tbl["_table_rows"][0]) == 4
+
+
+def test_table_surrounded_by_content():
+    """Test table embedded in a larger document."""
+    md = "# Title\n\nIntro text.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nOutro text.\n"
+    blocks = markdown_to_feishu_blocks(md)
+    block_types = [b["block_type"] for b in blocks]
+    assert block_types == [3, 2, 31, 2]  # heading, text, table, text
+
+
+def test_multiple_tables():
+    """Document with multiple tables."""
+    md = "| A |\n|---|\n| 1 |\n\nSome text.\n\n| B | C |\n|---|---|\n| 2 | 3 |"
+    blocks = markdown_to_feishu_blocks(md)
+    tables = [b for b in blocks if b["block_type"] == 31]
+    assert len(tables) == 2
+    assert len(tables[0]["_table_rows"]) == 2
+    assert len(tables[1]["_table_rows"]) == 2
+    assert _cell_text(tables[0]["_table_rows"][0][0]) == "A"
+    assert _cell_text(tables[1]["_table_rows"][0][0]) == "B"
+
+
+def test_analysis_marker_becomes_callout():
+    """Analysis sections should be converted into internal callout blocks."""
+    md = "【解析】：\n **段落结构：**\n  说明内容\n\n## 下一节"
+    blocks = markdown_to_feishu_blocks(md)
+
+    assert blocks[0]["block_type"] == 19
+    assert blocks[0]["callout"]["background_color"] == 2
+    assert blocks[0]["_children"][0]["block_type"] == 2
+    assert blocks[1]["block_type"] == 4
+
+
+def test_analysis_modules_support_mixed_colon_formats():
+    """Analysis module markers should handle the mixed formatting used by LLM output."""
+    md = (
+        "【解析】\n"
+        "  **段落结构：**\n"
+        "    说明内容\n"
+        "  **✨金句: **\n"
+        "    金句内容\n"
+        "  **做法要点: **\n"
+        "    1. 要点一\n"
+        "  **📜事例:**\n"
+        "    事例内容\n"
+        "  **🚀升华分析:** \n"
+        "    升华内容\n"
+    )
+    blocks = markdown_to_feishu_blocks(md)
+
+    assert [block["block_type"] for block in blocks] == [19, 19, 19, 19, 19]
+    assert [block["callout"]["background_color"] for block in blocks] == [2, 5, 4, 6, 1]
+    assert _block_text(blocks[0]["_children"][0]) == "段落结构："
+    assert _block_text(blocks[1]["_children"][0]) == "✨金句: "
+    assert _block_text(blocks[2]["_children"][0]) == "做法要点: "
+    assert _block_text(blocks[3]["_children"][0]) == "📜事例:"
+    assert _block_text(blocks[4]["_children"][0]) == "🚀升华分析:"
+
+
+def test_original_text_highlights_emphasis():
+    """Original text should convert bold emphasis into colored inline highlights."""
+    md = "【原文】普通句。**“引用句”**。**非引用重点**。"
+    blocks = markdown_to_feishu_blocks(md)
+
+    elements = blocks[0]["text"]["elements"]
+    quoted = next(elem for elem in elements if elem["text_run"]["content"] == "“引用句”")
+    plain = next(elem for elem in elements if elem["text_run"]["content"] == "非引用重点")
+
+    assert quoted["text_run"]["text_element_style"]["background_color"] == 3
+    assert quoted["text_run"]["text_element_style"]["bold"] is True
+    assert plain["text_run"]["text_element_style"]["background_color"] == 4
+    assert plain["text_run"]["text_element_style"]["bold"] is True
+
+
+def test_original_text_highlights_parenthetical_and_italic():
+    """Original text should style writing-thought hints and italic gold quotes."""
+    md = "【原文】前文。（行文思路）*金句*"
+    blocks = markdown_to_feishu_blocks(md)
+
+    elements = blocks[0]["text"]["elements"]
+    parenthetical = next(elem for elem in elements if elem["text_run"]["content"] == "（行文思路）")
+    italic = next(elem for elem in elements if elem["text_run"]["content"] == "金句")
+
+    assert parenthetical["text_run"]["text_element_style"]["background_color"] == 5
+    assert italic["text_run"]["text_element_style"]["background_color"] == 4
+    assert italic["text_run"]["text_element_style"]["italic"] is True
+
+
+def test_original_section_marker_on_own_line():
+    """A standalone original-section marker should style following body lines."""
+    md = "【原文】\n正文（行文思路）**中心句***金句*\n【解析】：\n **段落结构：**\n  说明"
+    blocks = markdown_to_feishu_blocks(md)
+
+    body_elements = blocks[1]["text"]["elements"]
+    parenthetical = next(elem for elem in body_elements if elem["text_run"]["content"] == "（行文思路）")
+    bold = next(elem for elem in body_elements if elem["text_run"]["content"] == "中心句")
+    italic = next(elem for elem in body_elements if elem["text_run"]["content"] == "金句")
+
+    assert parenthetical["text_run"]["text_element_style"]["background_color"] == 5
+    assert bold["text_run"]["text_element_style"] == {"bold": True, "background_color": 4}
+    assert italic["text_run"]["text_element_style"] == {"italic": True, "background_color": 4}

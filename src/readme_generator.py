@@ -15,9 +15,9 @@ class ReadmeGenerator:
         self.readme_path = Path(config["output"]["readme_path"])
 
     def generate(self, articles: list, analysis_md: str,
-                 feishu_url: Optional[str] = None) -> None:
+                 feishu_url: Optional[str] = None, target_date: Optional[str] = None) -> None:
         """Generate or update README.md with the latest analysis."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = target_date or datetime.now().strftime("%Y-%m-%d")
         model = self.config["llm"]["model"]
         history_rows = self._build_history_table(date_str, len(articles), feishu_url)
 

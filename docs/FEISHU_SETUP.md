@@ -93,6 +93,16 @@ curl -s -X GET 'https://open.feishu.cn/open-apis/wiki/v2/spaces?page_size=50' \
 ### 填入配置:
 将 `space_id` 填入 `config/config.yaml` 的 `feishu.wiki_space_id` 字段。
 
+如果你的知识库已经有三个目录，可以继续配置 `feishu.source_parent_node_tokens`，把来源名映射到对应目录的 `parent_node_token`：
+
+```yaml
+feishu:
+   source_parent_node_tokens:
+      "人民网-人民时评": "token_1"
+      "南方网-南方日报评论员": "token_2"
+      "人民网-壹时评": "token_3"
+```
+
 ---
 
 ## 第六步: 添加应用为知识库管理员 ⚠️ 关键步骤

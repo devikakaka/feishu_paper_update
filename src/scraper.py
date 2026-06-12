@@ -1,6 +1,7 @@
 """Multi-source web scraper supporting both static HTML pages and JSON APIs."""
 
 import html
+import re
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -30,15 +31,16 @@ class Article:
 class MultiSourceScraper:
     """
     Scrapes articles from multiple sources (HTML pages and JSON APIs).
-    Filters articles by today's date (Beijing time).
+    Filters articles by a target date (Beijing time by default).
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, target_date: Optional[str] = None):
         self.cfg = config["scraper"]
         self.sources = self.cfg.get("sources", [])
         self.request_delay = self.cfg.get("request_delay", 2.0)
         self.request_timeout = self.cfg.get("request_timeout", 30)
         self.max_content_length = self.cfg.get("max_content_length", 50000)
+        self.target_date = target_date or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": self.cfg.get(
@@ -49,9 +51,9 @@ class MultiSourceScraper:
         })
 
     def scrape(self) -> List[Article]:
-        """Main entry: scrape all sources and return today's articles."""
-        today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
-        print(f"  Target date: {today}")
+        """Main entry: scrape all sources and return articles for the target date."""
+        target_date = self.target_date
+        print(f"  Target date: {target_date}")
 
         all_articles = []
         for source in self.sources:
@@ -70,8 +72,31 @@ class MultiSourceScraper:
             except Exception as e:
                 print(f"  Warning: failed to scrape source {source_name}: {e}")
 
-        print(f"\n  Total articles found for {today}: {len(all_articles)}")
+        print(f"\n  Total articles found for {target_date}: {len(all_articles)}")
         return all_articles
+
+    def scrape_url(self, url: str, source_name: str = "") -> Optional[Article]:
+        """Scrape a single article URL using generic title/content extraction."""
+        soup = self._fetch_page(url)
+        if not soup:
+            return None
+
+        title = self._extract_title_from_page(soup)
+        content = self._extract_content_from_page(soup)
+        if not content:
+            print(f"  Warning: could not extract article content from {url}")
+            return None
+
+        if len(content) > self.max_content_length:
+            content = content[:self.max_content_length] + "\n... [truncated]"
+
+        return Article(
+            title=title or url,
+            url=url,
+            content=content,
+            source_name=source_name,
+            date=self.target_date,
+        )
 
     # ── HTML Source ─────────────────────────────────────────────────
 
@@ -80,7 +105,7 @@ class MultiSourceScraper:
         url = source["url"]
         base_url = source.get("base_url", url)
         selectors = source["selectors"]
-        today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+        target_date = self.target_date
 
         # Step 1: Fetch listing page
         soup = self._fetch_page(url)
@@ -111,14 +136,14 @@ class MultiSourceScraper:
                 if date_tag:
                     date_text = date_tag.get_text(strip=True)
 
-            # Filter: only today's articles
+            # Filter: only target-date articles
             # Handle both "2026-06-11" and "2026-06-11 09:33" formats
-            if date_text and not date_text.startswith(today):
+            if date_text and not date_text.startswith(target_date):
                 continue
 
             if not date_text:
                 # If no date selector, check URL for date pattern /YYYY/MMDD/
-                if today.replace("-", "")[:8] not in article_url:
+                if target_date.replace("-", "")[:8] not in article_url:
                     continue
 
             print(f"  Today's article: {title}")
@@ -196,17 +221,33 @@ class MultiSourceScraper:
         params = source.get("params", {})
         api_config = source["api"]
         method = source.get("method", "post").upper()  # Default to POST
-        today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+        target_date = self.target_date
+        source_headers = source.get("headers", {})
+        request_headers = {
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-TW;q=0.5",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Origin": "https://search.southcn.com",
+            "Referer": "https://search.southcn.com/?keyword=%E5%8D%97%E6%96%B9%E6%97%A5%E6%8A%A5%E8%AF%84%E8%AE%BA%E5%91%98&s=time&page=1",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        request_headers.update(source_headers)
 
         print(f"  Fetching API ({method}): {url}")
         try:
             if method == "GET":
                 resp = self.session.get(
-                    url, params=params, timeout=self.request_timeout,
+                    url,
+                    params=params,
+                    headers=request_headers,
+                    timeout=self.request_timeout,
                 )
             else:
                 resp = self.session.post(
-                    url, data=params, timeout=self.request_timeout,
+                    url,
+                    data=params,
+                    headers=request_headers,
+                    timeout=self.request_timeout,
                 )
             resp.raise_for_status()
             data = resp.json()
@@ -230,16 +271,18 @@ class MultiSourceScraper:
 
         print(f"  Found {len(items)} items in API response")
 
-        # Filter by today's date
+        # Filter by target date
         date_field = api_config["date_field"]
         title_filter = api_config.get("title_filter", "")  # Optional: must appear in title
         today_items = [
             item for item in items
-            if item.get(date_field, "").startswith(today)
+            if item.get(date_field, "").startswith(target_date)
         ]
-        print(f"  {len(today_items)} items match today's date ({today})")
+        print(f"  {len(today_items)} items match target date ({target_date})")
 
         articles = []
+        detail_api = api_config.get("detail_api")
+
         for item in today_items:
             # Title may contain HTML tags (<em> for search highlighting)
             raw_title = item.get(api_config["title_field"], "")
@@ -250,20 +293,24 @@ class MultiSourceScraper:
                 print(f"  Skipped (title filter): {title[:40]}")
                 continue
 
-            # Content: check for nested field (e.g. "post.content")
-            content_field = api_config.get("content_field", "content")
-            content = item
-            for key in content_field.split("."):
-                content = content.get(key, "") if isinstance(content, dict) else ""
-            content = html.unescape(content) if content else ""
+            # URL
+            article_url = item.get(api_config.get("url_field", "url"), "")
+
+            # If detail_api is configured, fetch full content from it
+            if detail_api:
+                content = self._fetch_api_detail_content(item, detail_api)
+            else:
+                # Fall back to list API content field
+                content_field = api_config.get("content_field", "content")
+                content = item
+                for key in content_field.split("."):
+                    content = content.get(key, "") if isinstance(content, dict) else ""
+                content = html.unescape(content) if content else ""
 
             # Skip articles with no content
             if not content or len(content.strip()) < 10:
                 print(f"  Skipped (no content): {title[:40]}")
                 continue
-
-            # URL
-            article_url = item.get(api_config.get("url_field", "url"), "")
 
             # Truncate if too long
             if len(content) > self.max_content_length:
@@ -283,6 +330,160 @@ class MultiSourceScraper:
 
     # ── Helpers ─────────────────────────────────────────────────────
 
+    def _fetch_api_detail_content(self, item: Dict, detail_api: dict) -> str:
+        """Fetch full article content from a detail API endpoint.
+
+        detail_api config:
+          url: URL template with {field_name} placeholders, e.g.
+               "https://news.southcn.com/api/nodePost/getOne?key={key}"
+          content_path: dot-separated path to content in response, e.g. "data.post.content"
+          content_type: "html" (strip tags) or "text" (plain text). Default "html".
+          prefetch:
+            Optional request made before the detail request. Its extracted fields are
+            merged into the URL template context. Supports the same placeholders.
+        """
+        context = dict(item)
+        context.update(self._extract_context_values(item, detail_api.get("context_extract")))
+        prefetch = detail_api.get("prefetch")
+        if prefetch:
+            fetched_values = self._fetch_detail_prefetch_values(item, prefetch)
+            for key, value in fetched_values.items():
+                if context.get(key) in (None, ""):
+                    context[key] = value
+
+        # Build URL by substituting placeholders from the request context
+        url = self._render_template(detail_api["url"], context)
+        missing_placeholders = self._find_missing_template_fields(detail_api["url"], context)
+        if missing_placeholders:
+            print(
+                "  Warning: detail API request context missing fields "
+                f"{missing_placeholders}; available item keys: {sorted(item.keys())}"
+            )
+            return ""
+
+        try:
+            time.sleep(self.request_delay)
+            resp = self.session.get(url, timeout=self.request_timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            print(f"  Warning: detail API request failed for {url}: {e}")
+            return ""
+
+        content = self._extract_first_available_value(
+            data,
+            detail_api.get("content_paths") or [detail_api.get("content_path", "data.post.content")],
+        )
+
+        if not content:
+            print(
+                "  Warning: detail API returned no content. Tried paths: "
+                f"{detail_api.get('content_paths') or [detail_api.get('content_path', 'data.post.content')]}"
+            )
+            return ""
+
+        content = html.unescape(str(content))
+        content_type = detail_api.get("content_type", "html")
+
+        # If content is HTML, strip tags and join paragraphs
+        if content_type == "html":
+            soup = BeautifulSoup(content, "lxml")
+            paragraphs = soup.find_all("p")
+            if paragraphs:
+                lines = [p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)]
+                content = "\n\n".join(lines)
+            else:
+                content = soup.get_text(separator="\n", strip=True)
+
+        return content
+
+    def _fetch_detail_prefetch_values(self, item: Dict, prefetch: dict) -> Dict[str, str]:
+        """Fetch and extract values needed before the detail API request."""
+        method = prefetch.get("method", "GET").upper()
+        url = self._render_template(prefetch["url"], item)
+        headers = prefetch.get("headers")
+        params = prefetch.get("params")
+
+        try:
+            time.sleep(self.request_delay)
+            if method == "POST":
+                resp = self.session.post(url, data=params, headers=headers, timeout=self.request_timeout)
+            else:
+                resp = self.session.get(url, params=params, headers=headers, timeout=self.request_timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            print(f"  Warning: detail prefetch request failed for {url}: {e}")
+            return {}
+
+        values = {}
+        for output_key, path in (prefetch.get("extract") or {}).items():
+            extracted_value = self._extract_first_available_value(data, path)
+            if extracted_value not in (None, ""):
+                values[output_key] = extracted_value
+            else:
+                print(f"  Warning: prefetch could not extract '{output_key}' from paths {path}")
+        return values
+
+    def _extract_context_values(self, item: Dict, field_mapping: Optional[Dict]) -> Dict[str, str]:
+        """Extract placeholder values from the list item using candidate paths."""
+        if not field_mapping:
+            return {}
+
+        values = {}
+        for output_key, path in field_mapping.items():
+            extracted_value = self._extract_first_available_value(item, path)
+            if extracted_value not in (None, ""):
+                values[output_key] = extracted_value
+        return values
+
+    def _render_template(self, template: str, values: Dict) -> str:
+        """Fill {field} placeholders in a template string from a dict."""
+        rendered = template
+        for field_match in re.finditer(r"\{(\w+)\}", template):
+            field_name = field_match.group(1)
+            rendered = rendered.replace(f"{{{field_name}}}", str(values.get(field_name, "")))
+        return rendered
+
+    def _find_missing_template_fields(self, template: str, values: Dict) -> list[str]:
+        """Return placeholders that are absent or empty in the context."""
+        missing = []
+        for field_match in re.finditer(r"\{(\w+)\}", template):
+            field_name = field_match.group(1)
+            if values.get(field_name) in (None, ""):
+                missing.append(field_name)
+        return missing
+
+    def _extract_first_available_value(self, data, paths):
+        """Try one or more paths and return the first non-empty value."""
+        if isinstance(paths, str):
+            paths = [paths]
+
+        for path in paths or []:
+            extracted_value = self._extract_value_by_path(data, path)
+            if extracted_value not in (None, ""):
+                return extracted_value
+        return None
+
+    def _extract_value_by_path(self, data, path: str):
+        """Navigate nested dict/list data with dot-separated paths."""
+        current = data
+        for key in path.split("."):
+            if isinstance(current, list):
+                if not key.isdigit():
+                    return None
+                index = int(key)
+                if index >= len(current):
+                    return None
+                current = current[index]
+                continue
+            if not isinstance(current, dict):
+                return None
+            current = current.get(key)
+            if current is None:
+                return None
+        return current
+
     def _fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """Fetch a URL and return a BeautifulSoup object, or None on error."""
         try:
@@ -293,3 +494,54 @@ class MultiSourceScraper:
         except requests.RequestException as e:
             print(f"  Warning: HTTP error for {url}: {e}")
             return None
+
+    def _extract_title_from_page(self, soup: BeautifulSoup) -> str:
+        """Extract a best-effort article title from a page."""
+        for selector in ("h1", "title"):
+            tag = soup.select_one(selector)
+            if tag:
+                text = tag.get_text(strip=True)
+                if text:
+                    return text
+        return ""
+
+    def _extract_content_from_page(self, soup: BeautifulSoup) -> str:
+        """Extract best-effort article body text from common content containers."""
+        selectors = (
+            "article",
+            "main",
+            '[role="main"]',
+            ".article",
+            ".article-content",
+            ".content",
+            ".post-content",
+            ".entry-content",
+            "#content",
+        )
+
+        content_tag = None
+        for selector in selectors:
+            candidate = soup.select_one(selector)
+            if candidate and candidate.get_text(strip=True):
+                content_tag = candidate
+                break
+
+        if content_tag is None:
+            paragraphs = [
+                p.get_text(strip=True)
+                for p in soup.select("p")
+                if p.get_text(strip=True) and len(p.get_text(strip=True)) > 2
+            ]
+            return "\n\n".join(paragraphs)
+
+        for tag in content_tag.select("script, style, noscript"):
+            tag.decompose()
+
+        paragraphs = [
+            p.get_text(strip=True)
+            for p in content_tag.select("p")
+            if p.get_text(strip=True) and len(p.get_text(strip=True)) > 2
+        ]
+        if paragraphs:
+            return "\n\n".join(paragraphs)
+        return content_tag.get_text(separator="\n", strip=True)
