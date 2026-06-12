@@ -9,14 +9,20 @@ from pathlib import Path
 
 import yaml
 
+if __package__ in {None, ""}:
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
 from src.config_loader import load_config
-from src.scraper import BEIJING_TZ, MultiSourceScraper
+from src.scraper import BEIJING_TZ, MultiSourceScraper, normalize_article_title
 from src.llm_analyzer import LLMAnalyzer
 from src.feishu_uploader import FeishuUploader
 from src.readme_generator import ReadmeGenerator
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         description="Article Scraper + Qwen Analyzer + Feishu Publisher"
     )
@@ -45,6 +51,11 @@ def main():
     )
     parser.add_argument("--skip-feishu", action="store_true", help="Skip Feishu upload even if configured")
     parser.add_argument("--dry-run", action="store_true", help="Scrape only, don't analyze or upload")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     target_date = _resolve_target_date(args.target_date)
@@ -112,17 +123,18 @@ def main():
 
     for index, article in enumerate(articles, start=1):
         print(f"  Article {index}/{len(articles)}: {article.title}")
+        clean_title = normalize_article_title(article.title)
         article_analysis = _normalize_analysis_header(
-            analyzer.analyze([article]),
+            _normalize_analysis_title(analyzer.analyze([article]), clean_title),
             source_name=article.source_name,
             article_url=article.url,
             article_date=article.date or target_date,
         )
-        article_document_title = _build_article_document_title(article.title, target_date)
+        article_document_title = _build_article_document_title(clean_title, target_date)
         analysis_sections.append(f"# {article_document_title}\n\n{article_analysis}")
 
         if save_individual_analysis:
-            article_analysis_path = analysis_output_dir / f"{index:02d}_{_safe_filename(article.title)}.md"
+            article_analysis_path = analysis_output_dir / f"{index:02d}_{_safe_filename(clean_title)}.md"
             article_analysis_path.write_text(
                 _render_analysis_file(
                     title=article_document_title,
@@ -174,11 +186,12 @@ def _save_raw_articles(articles, config, date_str):
     articles_dir = Path(config["output"]["raw_articles_dir"])
     articles_dir.mkdir(parents=True, exist_ok=True)
     for i, article in enumerate(articles):
-        safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in article.title)[:60].strip()
+        clean_title = normalize_article_title(article.title)
+        safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in clean_title)[:60].strip()
         filename = f"{date_str}_{i:02d}_{safe_title}.txt"
         path = articles_dir / filename
         path.write_text(
-            f"Title:  {article.title}\n"
+            f"Title:  {clean_title}\n"
             f"Source: {article.source_name or 'N/A'}\n"
             f"URL:    {article.url}\n"
             f"Date:   {article.date or 'N/A'}\n"
@@ -192,7 +205,33 @@ def _save_raw_articles(articles, config, date_str):
 
 def _build_article_document_title(article_title: str, date_str: str) -> str:
     """Build the Feishu document title for a single article."""
-    return f"{article_title}-{date_str}"
+    del date_str
+    return normalize_article_title(article_title)
+
+
+def _normalize_analysis_title(body: str, article_title: str) -> str:
+    """Normalize leading H1 titles in analysis markdown to the authoritative article title."""
+    normalized_title = normalize_article_title(article_title)
+    if not normalized_title:
+        return body
+
+    lines = body.splitlines()
+    first_h1_index = next((index for index, line in enumerate(lines) if line.startswith("# ")), None)
+    if first_h1_index is None:
+        return f"# {normalized_title}\n\n{body.lstrip()}"
+
+    lines[first_h1_index] = f"# {normalized_title}"
+
+    duplicate_index = first_h1_index + 1
+    while duplicate_index < len(lines) and not lines[duplicate_index].strip():
+        duplicate_index += 1
+
+    if duplicate_index < len(lines) and lines[duplicate_index].startswith("# "):
+        lines.pop(duplicate_index)
+        while duplicate_index < len(lines) and not lines[duplicate_index].strip():
+            lines.pop(duplicate_index)
+
+    return "\n".join(lines)
 
 
 def _normalize_analysis_header(
@@ -278,7 +317,10 @@ def _upload_analysis_directory(analysis_dir: Path, config: dict) -> None:
 
     for file_path in files:
         metadata, body = _read_analysis_file(file_path, config)
-        title = metadata.get("title") or _title_from_analysis_body(body) or _title_from_filename(file_path)
+        title = normalize_article_title(
+            metadata.get("title") or _title_from_analysis_body(body) or _title_from_filename(file_path)
+        )
+        body = _normalize_analysis_title(body, title)
         source_name = metadata.get("source_name") or _infer_source_name(file_path, config)
         print(f"  Uploading {file_path.name} -> {title} (source: {source_name or 'Unknown'})")
         uploaded_url = uploader.upload(title, body, source_name=source_name)
@@ -315,7 +357,7 @@ def _title_from_analysis_body(body: str) -> str:
     """Extract the first H1 title from a saved analysis body."""
     for line in body.splitlines():
         if line.startswith("# "):
-            return line[2:].strip()
+            return normalize_article_title(line[2:].strip())
     return ""
 
 
@@ -323,7 +365,7 @@ def _title_from_filename(file_path: Path) -> str:
     """Fallback title for legacy analysis files."""
     stem = file_path.stem
     stem = re.sub(r"^\d+_", "", stem)
-    return stem.replace("_", " ").strip()
+    return normalize_article_title(stem.replace("_", " ").strip())
 
 
 def _infer_source_name(file_path: Path, config: dict) -> str:
@@ -394,7 +436,7 @@ def _process_single_url(
 
     analyzer = LLMAnalyzer(config)
     article_analysis = _normalize_analysis_header(
-        analyzer.analyze([article]),
+        _normalize_analysis_title(analyzer.analyze([article]), article.title),
         source_name=article.source_name,
         article_url=article.url,
         article_date=article.date or target_date,
@@ -404,7 +446,7 @@ def _process_single_url(
     if config["output"].get("save_analysis", False):
         analysis_output_dir = Path(config["output"].get("analysis_output_dir", "output/analysis"))
         analysis_output_dir.mkdir(parents=True, exist_ok=True)
-        article_analysis_path = analysis_output_dir / f"01_{_safe_filename(article.title)}.md"
+        article_analysis_path = analysis_output_dir / f"01_{_safe_filename(article_document_title)}.md"
         article_analysis_path.write_text(
             _render_analysis_file(
                 title=article_document_title,

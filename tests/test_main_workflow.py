@@ -78,9 +78,9 @@ def test_main_processes_articles_one_by_one(
     assert mock_analyzer.analyze.call_args_list[2].args[0] == [articles[2]]
 
     assert mock_uploader.upload.call_count == 3
-    assert mock_uploader.upload.call_args_list[0].args[0] == "文章一-2026-06-12"
-    assert mock_uploader.upload.call_args_list[1].args[0] == "文章二-2026-06-12"
-    assert mock_uploader.upload.call_args_list[2].args[0] == "文章三-2026-06-12"
+    assert mock_uploader.upload.call_args_list[0].args[0] == "文章一"
+    assert mock_uploader.upload.call_args_list[1].args[0] == "文章二"
+    assert mock_uploader.upload.call_args_list[2].args[0] == "文章三"
 
 
 @patch("src.main.FeishuUploader")
@@ -145,6 +145,15 @@ def test_main_processes_single_url_with_feishu_node_mapping(
     )
     mock_uploader.upload.assert_called_once()
     assert mock_uploader.upload.call_args.kwargs["source_name"] == "南方网-南方日报评论员"
+
+
+def test_build_article_document_title_returns_clean_title():
+    """Document titles should keep only the core article title."""
+    from src import main as main_module
+
+    assert main_module._build_article_document_title("南方日报评论员：全力打造“旅游友好型城市”", "2026-06-12") == "全力打造“旅游友好型城市”"
+    assert main_module._build_article_document_title("文章标题-2026-06-12", "2026-06-12") == "文章标题"
+    assert main_module._build_article_document_title("人民论坛网评___“一县一业”撬动大市场", "2026-06-12") == "“一县一业”撬动大市场"
 
 
 def test_resolve_feishu_source_name_defaults_to_other():

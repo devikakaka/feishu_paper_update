@@ -318,7 +318,19 @@ def test_api_source_strips_html_from_title(mock_session, api_scraper_config):
     articles = scraper.scrape()
 
     assert len(articles) == 1
-    assert articles[0].title == "南方日报评论员：标题"
+    assert articles[0].title == "标题"
+
+
+def test_normalize_article_title_removes_source_and_date_variants():
+    """Title normalization should strip source labels and dates across common formats."""
+    from src.scraper import normalize_article_title
+
+    assert normalize_article_title("南方日报评论员：全力打造“旅游友好型城市”") == "全力打造“旅游友好型城市”"
+    assert normalize_article_title("人民论坛网评___“一县一业”撬动大市场") == "“一县一业”撬动大市场"
+    assert normalize_article_title("人民论坛网评 | “一县一业”撬动大市场") == "“一县一业”撬动大市场"
+    assert normalize_article_title("考出“三夏”好成绩（人民时评）") == "考出“三夏”好成绩"
+    assert normalize_article_title("考出“三夏”好成绩（人民时评") == "考出“三夏”好成绩"
+    assert normalize_article_title("全力打造“旅游友好型城市”-2026-06-12") == "全力打造“旅游友好型城市”"
 
 
 @patch("src.scraper.requests.Session")

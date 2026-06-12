@@ -93,6 +93,17 @@ def test_italic_inline():
     assert elements[0]["text_run"]["text_element_style"]["italic"] is True
 
 
+def test_bold_and_italic_do_not_get_confused():
+    """Regular bold markdown should stay bold instead of being parsed as italic."""
+    blocks = markdown_to_feishu_blocks("**bold** and *italic*")
+    elements = blocks[0]["text"]["elements"]
+
+    assert elements[0]["text_run"]["content"] == "bold"
+    assert elements[0]["text_run"]["text_element_style"] == {"bold": True}
+    assert elements[2]["text_run"]["content"] == "italic"
+    assert elements[2]["text_run"]["text_element_style"] == {"italic": True}
+
+
 def test_inline_code():
     """Test `code` inline styling."""
     blocks = markdown_to_feishu_blocks("`inline code`")
@@ -327,12 +338,35 @@ def test_analysis_modules_support_mixed_colon_formats():
     blocks = markdown_to_feishu_blocks(md)
 
     assert [block["block_type"] for block in blocks] == [19, 19, 19, 19, 19]
-    assert [block["callout"]["background_color"] for block in blocks] == [2, 5, 4, 6, 1]
+    assert [block["callout"]["background_color"] for block in blocks] == [2, 5, 3, 6, 1]
     assert _block_text(blocks[0]["_children"][0]) == "段落结构："
     assert _block_text(blocks[1]["_children"][0]) == "✨金句: "
     assert _block_text(blocks[2]["_children"][0]) == "做法要点: "
     assert _block_text(blocks[3]["_children"][0]) == "📜事例:"
     assert _block_text(blocks[4]["_children"][0]) == "🚀升华分析:"
+
+
+def test_analysis_modules_split_same_line_title_and_body():
+    """Analysis module markers should split same-line title/body into separate callouts."""
+    md = (
+        "【解析】\n"
+        "  **段落结构：** 理念承接→总体布局→分区域举例。\n"
+        "  **✨金句:** 友好温情，是文旅发展的价值所向；文旅资源，是产业提质的立身之本。\n"
+        "    - 提炼仿写句式：[抽象理念]，是[领域A]的价值所向；[具体载体]，是[领域B]的立身之本。\n"
+        "  **做法要点:** \n"
+        "    1. 规划特色廊道\n"
+        "  **📜事例:** 四大区域廊道建设案例。\n"
+    )
+    blocks = markdown_to_feishu_blocks(md)
+
+    assert [block["block_type"] for block in blocks] == [19, 19, 19, 19]
+    assert [block["callout"]["background_color"] for block in blocks] == [2, 5, 3, 6]
+    assert _block_text(blocks[0]["_children"][0]) == "段落结构："
+    assert _block_text(blocks[0]["_children"][1]) == "理念承接→总体布局→分区域举例。"
+    assert _block_text(blocks[1]["_children"][0]) == "✨金句:"
+    assert _block_text(blocks[1]["_children"][1]) == "友好温情，是文旅发展的价值所向；文旅资源，是产业提质的立身之本。"
+    assert _block_text(blocks[3]["_children"][0]) == "📜事例:"
+    assert _block_text(blocks[3]["_children"][1]) == "四大区域廊道建设案例。"
 
 
 def test_original_text_highlights_emphasis():
@@ -346,19 +380,21 @@ def test_original_text_highlights_emphasis():
 
     assert quoted["text_run"]["text_element_style"]["background_color"] == 3
     assert quoted["text_run"]["text_element_style"]["bold"] is True
-    assert plain["text_run"]["text_element_style"]["background_color"] == 4
+    assert plain["text_run"]["text_element_style"]["background_color"] == 3
     assert plain["text_run"]["text_element_style"]["bold"] is True
 
 
 def test_original_text_highlights_parenthetical_and_italic():
     """Original text should style writing-thought hints and italic gold quotes."""
-    md = "【原文】前文。（行文思路）*金句*"
+    md = "【原文】前文。（原文自带括号） （（行文思路））*金句*"
     blocks = markdown_to_feishu_blocks(md)
 
     elements = blocks[0]["text"]["elements"]
-    parenthetical = next(elem for elem in elements if elem["text_run"]["content"] == "（行文思路）")
+    plain_parenthetical = next(elem for elem in elements if elem["text_run"]["content"] == "前文。（原文自带括号） ")
+    parenthetical = next(elem for elem in elements if elem["text_run"]["content"] == "（（行文思路））")
     italic = next(elem for elem in elements if elem["text_run"]["content"] == "金句")
 
+    assert plain_parenthetical["text_run"]["text_element_style"] == {}
     assert parenthetical["text_run"]["text_element_style"]["background_color"] == 5
     assert italic["text_run"]["text_element_style"]["background_color"] == 4
     assert italic["text_run"]["text_element_style"]["italic"] is True
@@ -366,14 +402,16 @@ def test_original_text_highlights_parenthetical_and_italic():
 
 def test_original_section_marker_on_own_line():
     """A standalone original-section marker should style following body lines."""
-    md = "【原文】\n正文（行文思路）**中心句***金句*\n【解析】：\n **段落结构：**\n  说明"
+    md = "【原文】\n正文（原文括号） （（行文思路））**中心句***金句*\n【解析】：\n **段落结构：**\n  说明"
     blocks = markdown_to_feishu_blocks(md)
 
     body_elements = blocks[1]["text"]["elements"]
-    parenthetical = next(elem for elem in body_elements if elem["text_run"]["content"] == "（行文思路）")
+    plain_parenthetical = next(elem for elem in body_elements if elem["text_run"]["content"] == "正文（原文括号） ")
+    parenthetical = next(elem for elem in body_elements if elem["text_run"]["content"] == "（（行文思路））")
     bold = next(elem for elem in body_elements if elem["text_run"]["content"] == "中心句")
     italic = next(elem for elem in body_elements if elem["text_run"]["content"] == "金句")
 
+    assert plain_parenthetical["text_run"]["text_element_style"] == {}
     assert parenthetical["text_run"]["text_element_style"]["background_color"] == 5
-    assert bold["text_run"]["text_element_style"] == {"bold": True, "background_color": 4}
+    assert bold["text_run"]["text_element_style"] == {"bold": True, "background_color": 3}
     assert italic["text_run"]["text_element_style"] == {"italic": True, "background_color": 4}

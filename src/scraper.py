@@ -16,6 +16,62 @@ from bs4 import BeautifulSoup
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 
+def normalize_article_title(title: str) -> str:
+    """Normalize article titles to keep only the core title text."""
+    cleaned = html.unescape(title or "").strip()
+    if not cleaned:
+        return ""
+
+    prefix_patterns = [
+        r"^南方日报评论员(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+        r"^南方日报(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+        r"^人民网评(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+        r"^人民时评(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+        r"^人民论坛网评(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+        r"^人民论坛(?:\s*[-_—|｜]{1,}\s*|\s*[：:]\s*)",
+    ]
+    for pattern in prefix_patterns:
+        cleaned = re.sub(pattern, "", cleaned)
+
+    date_patterns = [
+        r"^\s*\d{4}[-/年.]\d{1,2}([-/月.]\d{1,2}日?)?\s*[-_|：:]\s*",
+        r"\s*[-_|：:]\s*\d{4}[-/年.]\d{1,2}([-/月.]\d{1,2}日?)?\s*$",
+        r"\s*[（(]\d{4}[-/年.]\d{1,2}([-/月.]\d{1,2}日?)?[)）]\s*$",
+    ]
+    source_suffix_patterns = [
+        r"\s*[-_|｜|]\s*南方网\s*$",
+        r"\s*[-_|｜|]\s*南方日报\s*$",
+        r"\s*[-_|｜|]\s*人民论坛网评\s*$",
+        r"\s*[-_|｜|]\s*人民论坛\s*$",
+        r"\s*[-_|｜|]\s*人民时评\s*$",
+        r"\s*[-_|｜|]\s*人民网评\s*$",
+        r"\s*[（(]南方网[)）]\s*$",
+        r"\s*[（(]南方日报[)）]\s*$",
+        r"\s*[（(]人民论坛网评[)）]\s*$",
+        r"\s*[（(]人民论坛[)）]\s*$",
+        r"\s*[（(]人民时评[)）]\s*$",
+        r"\s*[（(]人民网评[)）]\s*$",
+        r"\s*[（(]南方网\s*$",
+        r"\s*[（(]南方日报\s*$",
+        r"\s*[（(]人民论坛网评\s*$",
+        r"\s*[（(]人民论坛\s*$",
+        r"\s*[（(]人民时评\s*$",
+        r"\s*[（(]人民网评\s*$",
+    ]
+
+    changed = True
+    while changed:
+        changed = False
+        for pattern in date_patterns + source_suffix_patterns:
+            updated = re.sub(pattern, "", cleaned).strip()
+            if updated != cleaned:
+                cleaned = updated
+                changed = True
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_|：:()（）")
+    return cleaned or title.strip()
+
+
 @dataclass
 class Article:
     """Represents a scraped article."""
@@ -81,7 +137,7 @@ class MultiSourceScraper:
         if not soup:
             return None
 
-        title = self._extract_title_from_page(soup)
+        title = normalize_article_title(self._extract_title_from_page(soup))
         content = self._extract_content_from_page(soup)
         if not content:
             print(f"  Warning: could not extract article content from {url}")
@@ -126,7 +182,7 @@ class MultiSourceScraper:
 
             href = a_tag.get("href")
             article_url = urllib.parse.urljoin(base_url, href)
-            title = a_tag.get_text(strip=True)
+            title = normalize_article_title(a_tag.get_text(strip=True))
 
             # Extract date
             date_text = ""
@@ -174,7 +230,7 @@ class MultiSourceScraper:
         # Extract title
         title_sel = detail_selectors.get("title", "h1")
         title_tag = soup.select_one(title_sel)
-        title = title_tag.get_text(strip=True) if title_tag else fallback_title
+        title = normalize_article_title(title_tag.get_text(strip=True) if title_tag else fallback_title)
 
         # Extract content
         content_sel = detail_selectors.get("content", "article")
@@ -286,7 +342,7 @@ class MultiSourceScraper:
         for item in today_items:
             # Title may contain HTML tags (<em> for search highlighting)
             raw_title = item.get(api_config["title_field"], "")
-            title = BeautifulSoup(raw_title, "lxml").get_text()
+            title = normalize_article_title(BeautifulSoup(raw_title, "lxml").get_text())
 
             # Apply title filter if configured
             if title_filter and title_filter not in title:

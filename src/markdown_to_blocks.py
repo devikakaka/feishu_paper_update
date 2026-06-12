@@ -3,6 +3,10 @@
 import re
 from typing import Any, Dict, List
 
+BOLD_HIGHLIGHT_COLOR = 3
+ITALIC_HIGHLIGHT_COLOR = 4
+PARENTHETICAL_HIGHLIGHT_COLOR = 5
+
 
 def markdown_to_feishu_blocks(md: str) -> List[Dict]:
     """
@@ -130,38 +134,35 @@ def _text_elements(text: str) -> List[Dict]:
     # Strip &emsp; and similar non-breaking space entities
     text = text.replace("&emsp;", "").replace("&nbsp;", " ")
 
-    # Build pattern with explicit groups
-    # Group 2: bold, Group 3: underline+italic, Group 4: underline,
-    # Group 5: italic, Group 6: inline code, Group 7+8: link,
-    # Group 9: plain text, Group 10: fallback
+    # Use named groups so bold/italic handling stays explicit and regression-safe.
     pattern = re.compile(
-        r"\*\*(.+?)\*\*"
-        r"|<u>\*(.+?)\*</u>"
-        r"|<u>(.+?)</u>"
-        r"|\*(.+?)\*"
-        r"|`(.+?)`"
-        r"|\[(.+?)\]\((.+?)\)"
-        r"|([^*`\\[<]+)"
-        r"|(.)"
+        r"\*\*(?P<bold>.+?)\*\*"
+        r"|<u>\*(?P<underline_italic>.+?)\*</u>"
+        r"|<u>(?P<underline>.+?)</u>"
+        r"|\*(?P<italic>.+?)\*"
+        r"|`(?P<code>.+?)`"
+        r"|\[(?P<link_text>.+?)\]\((?P<link_url>.+?)\)"
+        r"|(?P<plain>[^*`\\[<]+)"
+        r"|(?P<fallback>.)"
     )
     elements = []
     for m in pattern.finditer(text):
-        if m.group(1):  # bold
-            elements.append(_run(m.group(1), {"bold": True}))
-        elif m.group(2):  # <u>*underline_italic*</u>
-            elements.append(_run(m.group(2), {"italic": True}))
-        elif m.group(3):  # <u>underline</u>
-            elements.append(_run(m.group(3), {}))
-        elif m.group(4):  # italic
-            elements.append(_run(m.group(4), {"italic": True}))
-        elif m.group(5):  # inline code
-            elements.append(_run(m.group(5), {"inline_code": True}))
-        elif m.group(6):  # link
-            elements.append(_run(m.group(6), {"link": {"url": m.group(7)}}))
-        elif m.group(8):  # plain
-            elements.append(_run(m.group(8), {}))
-        elif m.group(9):  # fallback — single special char
-            elements.append(_run(m.group(9), {}))
+        if m.group("bold"):
+            elements.append(_run(m.group("bold"), {"bold": True}))
+        elif m.group("underline_italic"):
+            elements.append(_run(m.group("underline_italic"), {"italic": True}))
+        elif m.group("underline"):
+            elements.append(_run(m.group("underline"), {}))
+        elif m.group("italic"):
+            elements.append(_run(m.group("italic"), {"italic": True}))
+        elif m.group("code"):
+            elements.append(_run(m.group("code"), {"inline_code": True}))
+        elif m.group("link_text"):
+            elements.append(_run(m.group("link_text"), {"link": {"url": m.group("link_url")}}))
+        elif m.group("plain"):
+            elements.append(_run(m.group("plain"), {}))
+        elif m.group("fallback"):
+            elements.append(_run(m.group("fallback"), {}))
 
     return elements or [_run(text, {})]
 
@@ -233,7 +234,10 @@ def _analysis_callouts(lines: List[str]) -> List[Dict[str, Any]]:
         if _is_analysis_module_marker(stripped):
             if current:
                 modules.append(current)
-            current = [stripped]
+            title, inline_body = _split_analysis_module_line(stripped)
+            current = [title]
+            if inline_body:
+                current.append(inline_body)
             continue
         if not current:
             current = [stripped]
@@ -304,11 +308,19 @@ def _is_analysis_callout_marker(text: str) -> bool:
 def _is_analysis_module_marker(text: str) -> bool:
     """Check whether a line starts an analysis module."""
     normalized = text.strip()
-    if normalized.startswith("**") and normalized.endswith("**"):
-        inner = normalized[2:-2].strip()
-        if ":" in inner or "：" in inner:
-            return True
-    return bool(re.match(r"^\*\*.+?[：:]\s*\*\*$", normalized))
+    return _split_analysis_module_line(normalized) is not None
+
+
+def _split_analysis_module_line(text: str) -> tuple[str, str] | None:
+    """Split an analysis module line into its title and any same-line body text."""
+    normalized = text.strip()
+    match = re.match(r"^(\*\*.+?[：:]\s*\*\*)(.*)$", normalized)
+    if not match:
+        return None
+
+    title = match.group(1).strip()
+    inline_body = match.group(2).strip()
+    return title, inline_body
 
 
 def _analysis_module_style(text: str) -> Dict[str, Any]:
@@ -316,8 +328,8 @@ def _analysis_module_style(text: str) -> Dict[str, Any]:
     module_styles = [
         ("段落结构", {"background_color": 2, "border_color": 2}),
         ("金句", {"background_color": 5, "border_color": 5}),
-        ("关键词句", {"background_color": 4, "border_color": 4}),
-        ("做法要点", {"background_color": 3, "border_color": 3}),
+        ("关键词句", {"background_color": 3, "border_color": 3}),
+        ("做法要点", {"background_color": 4, "border_color": 4}),
         ("事例", {"background_color": 6, "border_color": 6}),
         ("升华分析", {"background_color": 1, "border_color": 1}),
     ]
@@ -388,11 +400,11 @@ def _original_text_elements(text: str) -> List[Dict]:
     elements = []
     for match in pattern.finditer(text):
         if match.group(1):
-            elements.extend(_split_parenthetical_text(match.group(1), {"bold": True, "italic": True, "background_color": 4}))
+            elements.extend(_split_parenthetical_text(match.group(1), {"bold": True, "italic": True, "background_color": BOLD_HIGHLIGHT_COLOR}))
         elif match.group(2):
             elements.extend(_split_parenthetical_text(match.group(2), _original_bold_style(match.group(2))))
         elif match.group(3):
-            elements.extend(_split_parenthetical_text(match.group(3), {"italic": True, "background_color": 4}))
+            elements.extend(_split_parenthetical_text(match.group(3), {"italic": True, "background_color": ITALIC_HIGHLIGHT_COLOR}))
         elif match.group(4):
             elements.append(_run(match.group(4), {"inline_code": True}))
         elif match.group(5):
@@ -405,16 +417,13 @@ def _original_text_elements(text: str) -> List[Dict]:
 
 
 def _original_bold_style(text: str) -> Dict[str, Any]:
-    """Distinguish quoted highlights from regular bold emphasis in original text."""
-    stripped = text.strip()
-    if re.fullmatch(r"[\"“”‘’'「」『』《》〈〉].+[\"“”‘’'「」『』《》〈〉]", stripped):
-        return {"bold": True, "background_color": 3}
-    return {"bold": True, "background_color": 4}
+    """Style bold emphasis in original text as the dedicated bold highlight color."""
+    return {"bold": True, "background_color": BOLD_HIGHLIGHT_COLOR}
 
 
 def _split_parenthetical_text(text: str, base_style: Dict[str, Any]) -> List[Dict]:
-    """Split text so parenthetical writing-thought hints get a light blue background."""
-    pattern = re.compile(r"([（(][^）)]*[）)])")
+    """Split text so only explicit double-parenthesis annotations get a blue background."""
+    pattern = re.compile(r"(（（[^）]*））|\(\([^)]*\)\))")
     parts = pattern.split(text)
     elements = []
     for part in parts:
@@ -422,7 +431,7 @@ def _split_parenthetical_text(text: str, base_style: Dict[str, Any]) -> List[Dic
             continue
         style = dict(base_style)
         if pattern.fullmatch(part):
-            style["background_color"] = 5
+            style["background_color"] = PARENTHETICAL_HIGHLIGHT_COLOR
         elements.append(_run(part, style))
     return elements
 

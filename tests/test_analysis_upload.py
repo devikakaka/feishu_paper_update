@@ -9,7 +9,7 @@ from src import main as main_module
 def test_render_analysis_file_includes_metadata():
     """Saved analysis files should preserve source metadata for later uploads."""
     content = main_module._render_analysis_file(
-        title="文章一-2026-06-12",
+        title="文章一",
         source_name="人民网-人民时评",
         article_url="https://example.com/a1",
         target_date="2026-06-12",
@@ -51,12 +51,12 @@ def test_upload_analysis_directory_uses_metadata_source(mock_uploader_cls, tmp_p
     analysis_file = tmp_path / "01_文章一.md"
     analysis_file.write_text(
         "---\n"
-        "title: 文章一-2026-06-12\n"
+        "title: 文章一\n"
         "source_name: 人民网-人民时评\n"
         "article_url: https://example.com/a1\n"
         "date: 2026-06-12\n"
         "---\n\n"
-        "# 文章一-2026-06-12\n\n分析正文\n",
+        "# 文章一\n\n分析正文\n",
         encoding="utf-8",
     )
 
@@ -80,7 +80,7 @@ def test_upload_analysis_directory_uses_metadata_source(mock_uploader_cls, tmp_p
 
     assert mock_uploader.upload.call_count == 1
     assert mock_uploader.upload.call_args.kwargs["source_name"] == "人民网-人民时评"
-    assert mock_uploader.upload.call_args.args[0] == "文章一-2026-06-12"
+    assert mock_uploader.upload.call_args.args[0] == "文章一"
 
 
 @patch("src.main.FeishuUploader")
@@ -113,4 +113,23 @@ def test_upload_analysis_directory_infers_source_from_filename(mock_uploader_cls
 
     assert mock_uploader.upload.call_count == 1
     assert mock_uploader.upload.call_args.kwargs["source_name"] == "南方网-南方日报评论员"
-    assert mock_uploader.upload.call_args.args[0] == "南方日报评论员：以一流营商环境助推高质量发展-2026-06-10"
+    assert mock_uploader.upload.call_args.args[0] == "以一流营商环境助推高质量发展"
+
+
+def test_normalize_analysis_title_rewrites_h1_to_clean_title():
+    """Analysis markdown should keep a clean H1 without source prefix or date."""
+    body = "# 南方日报评论员：全力打造“旅游友好型城市”-2026-06-12\n\n正文"
+
+    normalized = main_module._normalize_analysis_title(body, "南方日报评论员：全力打造“旅游友好型城市”")
+
+    assert normalized.startswith("# 全力打造“旅游友好型城市”\n")
+
+
+def test_normalize_analysis_title_removes_duplicate_leading_h1():
+    """Analysis markdown should drop the duplicated model-generated title line."""
+    body = "# 全力打造“旅游友好型城市”\n\n# 南方日报评论员：全力打造“旅游友好型城市”\n> 来源：南方日报 ｜ 日期：2026-06-12 ｜ https://example.com\n"
+
+    normalized = main_module._normalize_analysis_title(body, "南方日报评论员：全力打造“旅游友好型城市”")
+
+    assert normalized.count("# 全力打造“旅游友好型城市”") == 1
+    assert "南方日报评论员：" not in normalized
